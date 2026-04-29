@@ -21,8 +21,25 @@ dependencies = [
     "seaborn>=0.13.2",
     "sentencepiece>=0.2.1",
     "tokenizers>=0.22.2",
-    "torch>=2.11.0",
+    # torch: installed separately via PyTorch index to avoid nvidia-* sub-package
+    # bloat (~8GB). See scripts/setup_sagemaker.sh for install instructions.
+    "torch>=2.2.0",
     "tqdm>=4.67.3",
     "transformers>=5.7.0",
     "wandb>=0.26.1",
+    "ipykernel>=6.0.0",
 ]
+
+[tool.uv]
+# Exclude nvidia CUDA sub-packages from sync — they're already present on
+# SageMaker/GPU instances and cause "no space left on device" when downloaded.
+# torch is installed separately via: uv pip install torch --index-url https://download.pytorch.org/whl/cu121
+package-manager-allow-list = []
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
