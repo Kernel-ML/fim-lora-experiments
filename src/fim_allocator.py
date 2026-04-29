@@ -50,11 +50,26 @@ def accumulate_fim(
     model.train()
     device = next(model.parameters()).device
 
-    # Ensure LoRA adapter weights require grad — needed for backward to flow
-    for name, module in model.named_modules():
-        if isinstance(module, LoraLinear) and adapter_name in module.lora_A:
-            module.lora_A[adapter_name].weight.requires_grad_(True)
-            module.lora_B[adapter_name].weight.requires_grad_(True)
+    # Build a map: layer_name → lora_A parameter
+    # Use named_parameters() which reliably tracks the parameter objects that
+    # receive .grad after backward — module.lora_A[adapter].weight.grad can be
+    # None even when the parameter is trainable due to how PEFT registers params.
+    lora_a_params: dict[str, torch.Tensor] = {}
+    for param_name, param in model.named_parameters():
+        # PEFT parameter names look like:
+        #   base_model.model.roberta.encoder.layer.0.attention.self.query.lora_A.default.weight
+        if f".lora_A.{adapter_name}.weight" in param_name:
+            # Layer name = everything before .lora_A.
+            layer_name = param_name.replace(f".lora_A.{adapter_name}.weight", "")
+            param.requires_grad_(True)
+            lora_a_params[layer_name] = param
+
+    if not lora_a_params:
+        warnings.warn(
+            f"No lora_A parameters found for adapter '{adapter_name}'. "
+            "Check that target_modules are correct and the model is a PeftModel."
+        )
+        return {}
 
     try:
         for batch_idx, batch in enumerate(dataloader):
@@ -71,16 +86,14 @@ def accumulate_fim(
             loss.backward()
 
             with torch.no_grad():
-                for name, module in model.named_modules():
-                    if isinstance(module, LoraLinear) and adapter_name in module.lora_A:
-                        w = module.lora_A[adapter_name].weight
-                        if w.grad is None:
-                            continue
-                        grad_sq = w.grad.detach() ** 2
-                        if name not in fim_accum:
-                            fim_accum[name] = torch.zeros_like(grad_sq)
-                        fim_accum[name].add_(grad_sq)
-                        fim_steps[name] += 1
+                for layer_name, param in lora_a_params.items():
+                    if param.grad is None:
+                        continue
+                    grad_sq = param.grad.detach() ** 2
+                    if layer_name not in fim_accum:
+                        fim_accum[layer_name] = torch.zeros_like(grad_sq)
+                    fim_accum[layer_name].add_(grad_sq)
+                    fim_steps[layer_name] += 1
 
             model.zero_grad()
 
