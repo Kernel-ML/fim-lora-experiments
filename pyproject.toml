@@ -30,12 +30,6 @@ dependencies = [
     "ipykernel>=6.0.0",
 ]
 
-[tool.uv]
-# Exclude nvidia CUDA sub-packages from sync — they're already present on
-# SageMaker/GPU instances and cause "no space left on device" when downloaded.
-# torch is installed separately via: uv pip install torch --index-url https://download.pytorch.org/whl/cu121
-package-manager-allow-list = []
-
 [[tool.uv.index]]
 name = "pytorch-cu121"
 url = "https://download.pytorch.org/whl/cu121"
