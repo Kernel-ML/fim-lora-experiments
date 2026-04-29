@@ -7,18 +7,24 @@ Usage:
         --task mnli \
         --rank 8 \
         --seed 42 \
-        --instance ml.g5.2xlarge
+        --instance ml.g6.xlarge
 
-    # Full GLUE sweep (launches all jobs in parallel)
+    # Full GLUE sweep (launches all jobs in parallel, ~$12 with spot)
     uv run python scripts/sagemaker_train.py \
         --sweep glue \
-        --instance ml.g5.2xlarge
+        --instance ml.g6.xlarge
 
-Instance recommendations:
-    ml.g5.2xlarge   — 1x A10G 24GB,  $1.52/hr — GLUE/DeBERTa (recommended)
-    ml.g5.12xlarge  — 4x A10G 96GB,  $5.67/hr — faster sweeps
-    ml.p3.2xlarge   — 1x V100 16GB,  $3.83/hr — GLUE only (tight on memory)
-    ml.p4d.24xlarge — 8x A100 40GB, $32.77/hr — LLaMA-3-8B (overkill for GLUE)
+    # LLaMA-3-8B sweep (~$25 with spot)
+    uv run python scripts/sagemaker_train.py \
+        --sweep llama \
+        --instance ml.g6e.2xlarge
+
+Instance recommendations (us-east-1 on-demand, ~70% off with spot):
+    ml.g6.xlarge    — 1x L4    24GB,  $1.13/hr — GLUE/DeBERTa  ← recommended
+    ml.g6.2xlarge   — 1x L4    24GB,  $1.22/hr — GLUE (more RAM)
+    ml.g6e.2xlarge  — 1x L40S  48GB,  $2.80/hr — LLaMA-3-8B    ← recommended
+    ml.g6e.12xlarge — 4x L40S 192GB, $13.12/hr — parallel LLaMA runs
+    ml.g5.2xlarge   — 1x A10G  24GB,  $1.52/hr — fallback if g6 unavailable
 """
 
 from __future__ import annotations
@@ -212,8 +218,8 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--sweep", choices=["glue", "llama"], help="Launch full sweep")
     parser.add_argument("--collect", action="store_true", help="Download results from S3")
-    parser.add_argument("--instance", default="ml.g5.2xlarge",
-                        help="SageMaker instance type")
+    parser.add_argument("--instance", default="ml.g6.xlarge",
+                        help="SageMaker instance type (default: ml.g6.xlarge — L4 24GB, $1.13/hr)")
     parser.add_argument("--role", default=ROLE,
                         help="SageMaker IAM role ARN (or set SAGEMAKER_ROLE env var)")
     parser.add_argument("--bucket", default=S3_BUCKET,
