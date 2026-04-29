@@ -41,7 +41,6 @@ def accumulate_fim(
     Returns:
         Mapping from layer name to eFIM diagonal tensor (shape = lora_A.weight.shape).
     """
-    from peft.tuners.lora import LoraModel
     from peft.tuners.lora.layer import Linear as LoraLinear
 
     fim_accum: dict[str, torch.Tensor] = {}
@@ -50,6 +49,12 @@ def accumulate_fim(
     was_training = model.training
     model.train()
     device = next(model.parameters()).device
+
+    # Ensure LoRA adapter weights require grad — needed for backward to flow
+    for name, module in model.named_modules():
+        if isinstance(module, LoraLinear) and adapter_name in module.lora_A:
+            module.lora_A[adapter_name].weight.requires_grad_(True)
+            module.lora_B[adapter_name].weight.requires_grad_(True)
 
     try:
         for batch_idx, batch in enumerate(dataloader):
@@ -85,13 +90,27 @@ def accumulate_fim(
     if not fim_accum:
         warnings.warn(
             "No FIM scores accumulated — no gradients found for LoRA layers. "
-            "Check that your dataloader produces a loss and target_modules are correct."
+            "Check: (1) dataloader produces a .loss, (2) target_modules match "
+            "actual layer names, (3) model.train() is called before accumulation."
         )
+        return {}
 
-    return {
+    result = {
         name: fim_accum[name] / max(fim_steps[name], 1)
         for name in fim_accum
     }
+
+    # Warn if all scores are effectively zero (gradients didn't flow)
+    all_zero = all(v.abs().max().item() < 1e-12 for v in result.values())
+    if all_zero:
+        warnings.warn(
+            "All FIM scores are zero — gradients did not flow through LoRA layers. "
+            "This usually means requires_grad was False on lora_A weights, or the "
+            "loss did not depend on the LoRA parameters. Check that "
+            "model.print_trainable_parameters() shows trainable params > 0."
+        )
+
+    return result
 
 
 # ---------------------------------------------------------------------------
