@@ -119,6 +119,29 @@ print('  baselines imports OK ✓')
 "
 
 # ---------------------------------------------------------------------------
+# 8. Install GitHub CLI (gh) for pushing without HTTPS credential prompts
+# ---------------------------------------------------------------------------
+echo ""
+echo ">>> Installing GitHub CLI (gh)"
+
+if command -v gh &>/dev/null; then
+  echo "  gh already installed: $(gh --version | head -1)"
+else
+  type -p wget >/dev/null || (sudo apt update && sudo apt install wget -y) \
+    && sudo mkdir -p -m 755 /etc/apt/keyrings \
+    && out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    && cat $out | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+    && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && sudo mkdir -p -m 755 /etc/apt/sources.list.d \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+       | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && sudo apt update \
+    && sudo apt install gh -y
+  echo "  ✓ gh installed: $(gh --version | head -1)"
+  echo "  → Run: gh auth login"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
@@ -127,10 +150,11 @@ echo "  Setup complete ✓"
 echo "========================================"
 echo ""
 echo "Next steps:"
-echo "  1. Refresh JupyterLab (F5) to see 'FIM-LoRA (uv)' kernel"
-echo "  2. Open notebooks/01_smoke_test.ipynb → select 'FIM-LoRA (uv)' kernel"
-echo "  3. Run smoke test to validate pipeline"
-echo "  4. Launch experiments:"
+echo "  1. gh auth login                    ← authenticate GitHub CLI for git push"
+echo "  2. bash scripts/setup_hf_token.sh   ← set HuggingFace token"
+echo "  3. uv run wandb login               ← set W&B API key"
+echo "  4. Refresh JupyterLab (F5) to see 'FIM-LoRA (uv)' kernel"
+echo "  5. Launch experiments:"
 echo ""
 echo "     # Single job (validate before full sweep)"
 echo "     uv run python src/train_glue.py --method fim_lora --task rte --rank 4 --no-wandb"
