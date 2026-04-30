@@ -58,6 +58,21 @@ HF_DLC = {
     "py_version": "py310",
 }
 
+# GPU count per instance type — used to set N_GPUS for parallel sweep
+INSTANCE_GPU_COUNT = {
+    "ml.g5.xlarge":    1,
+    "ml.g5.2xlarge":   1,
+    "ml.g5.4xlarge":   1,
+    "ml.g5.12xlarge":  4,
+    "ml.g5.48xlarge":  8,
+    "ml.g6.xlarge":    1,
+    "ml.g6.2xlarge":   1,
+    "ml.g6e.2xlarge":  1,
+    "ml.g6e.12xlarge": 4,
+    "ml.p3.2xlarge":   1,
+    "ml.p3.8xlarge":   4,
+}
+
 
 # ---------------------------------------------------------------------------
 # Launch single job

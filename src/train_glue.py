@@ -93,8 +93,8 @@ def preprocess_glue(task: str, tokenizer, max_length: int = 512):
 def load_glue_dataset(task: str, tokenizer, max_length: int = 512):
     raw = load_dataset("glue", task)
     tokenize_fn = preprocess_glue(task, tokenizer, max_length)
-    tokenized = raw.map(tokenize_fn, batched=True, remove_columns=raw["train"].column_names
-                        if task != "mnli" else [c for c in raw["train"].column_names if c != "label"])
+    cols_to_remove = [c for c in raw["train"].column_names if c != "label"]
+    tokenized = raw.map(tokenize_fn, batched=True, remove_columns=cols_to_remove)
     tokenized = tokenized.rename_column("label", "labels")
     tokenized.set_format("torch")
     return tokenized
@@ -134,9 +134,9 @@ def run(args):
         lora_alpha=args.rank * 2,       # 2r — validated stable in FP32
         lora_dropout=0.1,
         target_modules=DEBERTA_TARGET_MODULES,
-        learning_rate=2e-4,             # validated stable in FP32
-        num_epochs=TASK_EPOCHS.get(args.task, 10),
-        batch_size=16,                  # L4 24GB OOMs at 32 in FP32; grad_accum=2 restores effective=32
+        learning_rate=2e-4,
+        num_epochs=args.num_epochs if args.num_epochs else TASK_EPOCHS.get(args.task, 10),
+        batch_size=8,
         warmup_ratio=0.06,
         weight_decay=0.01,
         max_seq_length=512,
@@ -156,7 +156,8 @@ def run(args):
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     num_labels = task_cfg["num_labels"]
     base_model = AutoModelForSequenceClassification.from_pretrained(
-        MODEL_NAME, num_labels=num_labels, ignore_mismatched_sizes=True
+        MODEL_NAME, num_labels=num_labels, ignore_mismatched_sizes=True,
+        use_safetensors=True, torch_dtype=torch.float32,
     )
 
     # PEFT config
@@ -222,17 +223,24 @@ def run(args):
         weight_decay=cfg.weight_decay,
         warmup_ratio=cfg.warmup_ratio,
         lr_scheduler_type="linear",
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model=task_cfg["metric"],
         report_to="wandb" if not args.no_wandb else "none",
         run_name=run_name,
         seed=args.seed,
+<<<<<<< HEAD
         fp16=False,    # DeBERTa-v3 requires FP32 — fp16 causes loss spikes
         bf16=False,
+=======
+        bf16=False,
+        fp16=False,
+        gradient_accumulation_steps=4,
+>>>>>>> 1184445 (fix: resolve DeBERTa-v3 NaN training + add multi-GPU sweep support)
         dataloader_num_workers=4,
         logging_steps=50,
+        max_grad_norm=1.0,
     )
 
     trainer = Trainer(
@@ -240,7 +248,7 @@ def run(args):
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=collator,
         compute_metrics=build_compute_metrics(args.task),
     )
@@ -285,6 +293,7 @@ if __name__ == "__main__":
     parser.add_argument("--rank", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--fim-batches", type=int, default=8)
+    parser.add_argument("--num-epochs", type=int, default=None, help="Override epoch count")
     parser.add_argument("--output-dir", default="results")
     parser.add_argument("--no-wandb", action="store_true")
     args = parser.parse_args()

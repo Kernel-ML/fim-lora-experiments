@@ -32,6 +32,12 @@ def accumulate_fim(
 ) -> dict[str, torch.Tensor]:
     """Run calibration passes and accumulate mean squared gradients per LoRA layer.
 
+    We accumulate FIM on lora_B (not lora_A) because standard LoRA initialises
+    lora_B = 0, which makes ∂loss/∂lora_A = scaling × lora_B^T × upstream_grad = 0
+    at initialisation — all lora_A FIM scores would be exactly zero.
+    lora_A is kaiming-initialised (non-zero), so lora_B receives a meaningful
+    gradient: ∂loss/∂lora_B = scaling × upstream_grad × (lora_A @ x)^T.
+
     Args:
         model: A PeftModel with LoRA adapters attached.
         dataloader: Iterable of dicts passed as model(**batch).
@@ -39,10 +45,8 @@ def accumulate_fim(
         adapter_name: Active adapter name.
 
     Returns:
-        Mapping from layer name to eFIM diagonal tensor (shape = lora_A.weight.shape).
+        Mapping from layer name to eFIM diagonal tensor (shape = lora_B.weight.shape).
     """
-    from peft.tuners.lora.layer import Linear as LoraLinear
-
     fim_accum: dict[str, torch.Tensor] = {}
     fim_steps: dict[str, int] = defaultdict(int)
 
@@ -50,23 +54,21 @@ def accumulate_fim(
     model.train()
     device = next(model.parameters()).device
 
-    # Build a map: layer_name → lora_A parameter
+    # Build a map: layer_name → lora_B parameter.
     # Use named_parameters() which reliably tracks the parameter objects that
-    # receive .grad after backward — module.lora_A[adapter].weight.grad can be
-    # None even when the parameter is trainable due to how PEFT registers params.
-    lora_a_params: dict[str, torch.Tensor] = {}
+    # receive .grad after backward.
+    # PEFT parameter names look like:
+    #   base_model.model.roberta.encoder.layer.0.attention.self.query.lora_B.default.weight
+    lora_b_params: dict[str, torch.Tensor] = {}
     for param_name, param in model.named_parameters():
-        # PEFT parameter names look like:
-        #   base_model.model.roberta.encoder.layer.0.attention.self.query.lora_A.default.weight
-        if f".lora_A.{adapter_name}.weight" in param_name:
-            # Layer name = everything before .lora_A.
-            layer_name = param_name.replace(f".lora_A.{adapter_name}.weight", "")
+        if f".lora_B.{adapter_name}.weight" in param_name:
+            layer_name = param_name.replace(f".lora_B.{adapter_name}.weight", "")
             param.requires_grad_(True)
-            lora_a_params[layer_name] = param
+            lora_b_params[layer_name] = param
 
-    if not lora_a_params:
+    if not lora_b_params:
         warnings.warn(
-            f"No lora_A parameters found for adapter '{adapter_name}'. "
+            f"No lora_B parameters found for adapter '{adapter_name}'. "
             "Check that target_modules are correct and the model is a PeftModel."
         )
         return {}
@@ -86,7 +88,7 @@ def accumulate_fim(
             loss.backward()
 
             with torch.no_grad():
-                for layer_name, param in lora_a_params.items():
+                for layer_name, param in lora_b_params.items():
                     if param.grad is None:
                         continue
                     grad_sq = param.grad.detach() ** 2
@@ -159,7 +161,11 @@ def allocate_ranks(
     """Allocate integer ranks proportional to importance under a fixed budget.
 
     Budget = n_layers × base_r (mean rank preserved).
-    Uses the largest-remainder method for integer rounding.
+    Uses a two-phase water-filling algorithm:
+      Phase 1 — iteratively fix layers that saturate r_max, redistributing their
+                 excess budget to the remaining free layers.
+      Phase 2 — apply largest-remainder rounding, then enforce r_min by stealing
+                 from the lowest-importance layers above r_min.
 
     Args:
         importance: Layer-name → scalar importance score.
@@ -175,19 +181,54 @@ def allocate_ranks(
 
     r_max = r_max if r_max is not None else 2 * base_r
     names = list(importance.keys())
-    scores = [max(importance[n], 1e-10) for n in names]
-    total_score = sum(scores)
+    scores = {name: max(importance[name], 1e-10) for name in names}
     budget = base_r * len(names)
 
-    raw = [s / total_score * budget for s in scores]
-    floors = [math.floor(x) for x in raw]
-    remainders = sorted(enumerate(raw[i] - floors[i] for i in range(len(raw))),
-                        key=lambda x: -x[1])
-    remainder_budget = budget - sum(floors)
-    for j in range(int(remainder_budget)):
-        floors[remainders[j][0]] += 1
+    result: dict[str, int] = {}
+    free = list(names)
+    free_budget = float(budget)
 
-    return {names[i]: max(r_min, min(r_max, floors[i])) for i in range(len(names))}
+    # Phase 1: iteratively fix layers that saturate r_max, redistributing their
+    # excess budget to the remaining free layers.
+    while free:
+        total_score = sum(scores[n] for n in free)
+        raw = {n: scores[n] / total_score * free_budget for n in free}
+        over_max = [n for n in free if math.floor(raw[n]) >= r_max]
+        if not over_max:
+            break
+        for n in over_max:
+            result[n] = r_max
+        free_budget -= len(over_max) * r_max
+        free = [n for n in free if n not in result]
+
+    # Phase 2: LRM over remaining free layers, then enforce r_min.
+    if free:
+        total_score = sum(scores[n] for n in free)
+        raw = {n: scores[n] / total_score * free_budget for n in free}
+        floors = {n: math.floor(raw[n]) for n in free}
+        rems = sorted(free, key=lambda n: raw[n] - floors[n], reverse=True)
+        leftover = int(free_budget) - sum(floors.values())
+        for n in rems[:leftover]:
+            floors[n] += 1
+        result.update(floors)
+
+        # Enforce r_min: bump sub-minimum layers and steal from least-important donors.
+        deficit = sum(max(0, r_min - result[n]) for n in free)
+        for n in free:
+            result[n] = max(r_min, result[n])
+        if deficit:
+            donors = sorted(
+                [n for n in free if result[n] > r_min],
+                key=lambda n: scores[n],
+            )
+            for donor in donors:
+                give = min(result[donor] - r_min, deficit)
+                result[donor] -= give
+                deficit -= give
+                if deficit == 0:
+                    break
+
+    return result
 
 
 # ---------------------------------------------------------------------------
