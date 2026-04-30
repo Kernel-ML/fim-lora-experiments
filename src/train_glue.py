@@ -230,14 +230,8 @@ def run(args):
         report_to="wandb" if not args.no_wandb else "none",
         run_name=run_name,
         seed=args.seed,
-<<<<<<< HEAD
         fp16=False,    # DeBERTa-v3 requires FP32 — fp16 causes loss spikes
         bf16=False,
-=======
-        bf16=False,
-        fp16=False,
-        gradient_accumulation_steps=4,
->>>>>>> 1184445 (fix: resolve DeBERTa-v3 NaN training + add multi-GPU sweep support)
         dataloader_num_workers=4,
         logging_steps=50,
         max_grad_norm=1.0,

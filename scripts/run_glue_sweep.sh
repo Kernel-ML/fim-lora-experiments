@@ -21,6 +21,13 @@ SEEDS="${SEEDS:-42 1337 2024}"
 OUTPUT_DIR="${OUTPUT_DIR:-results}"
 N_GPUS="${N_GPUS:-1}"
 
+# Tee all output to a timestamped log file
+mkdir -p logs
+LOG_FILE="logs/sweep_$(date +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "Logging to $LOG_FILE"
+echo ""
+
 echo "=== FIM-LoRA GLUE Sweep ==="
 echo "Methods: $METHODS"
 echo "Tasks:   $TASKS"
@@ -29,21 +36,35 @@ echo "Seeds:   $SEEDS"
 echo "GPUs:    $N_GPUS (parallel workers)"
 echo ""
 
-# Build the full job list
+# Build the full job list, skipping already-completed jobs
 JOBS=()
+SKIPPED=0
 for METHOD in $METHODS; do
   for TASK in $TASKS; do
     for RANK in $RANKS; do
       for SEED in $SEEDS; do
-        JOBS+=("$METHOD|$TASK|$RANK|$SEED")
+        RESULT="$OUTPUT_DIR/$METHOD/$TASK/r$RANK/seed$SEED/results.json"
+        if [ -f "$RESULT" ]; then
+          echo "  [skip] $METHOD / $TASK / r=$RANK / seed=$SEED (results.json exists)"
+          SKIPPED=$((SKIPPED + 1))
+        else
+          JOBS+=("$METHOD|$TASK|$RANK|$SEED")
+        fi
       done
     done
   done
 done
 
 TOTAL=${#JOBS[@]}
-echo "Total jobs: $TOTAL"
+echo "Skipped: $SKIPPED (already complete)"
+echo "To run:  $TOTAL"
 echo ""
+
+if [ "$TOTAL" -eq 0 ]; then
+  echo "All jobs already complete."
+  uv run python src/collect_results.py --output-dir "$OUTPUT_DIR" --experiment glue
+  exit 0
+fi
 
 # Worker function: runs jobs assigned to one GPU
 run_on_gpu() {
