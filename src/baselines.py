@@ -60,7 +60,7 @@ def get_lora_config(cfg: ExperimentConfig):
     )
 
 
-def get_adalora_config(cfg: ExperimentConfig):
+def get_adalora_config(cfg: ExperimentConfig, total_steps: int = 0):
     """AdaLoRA — SVD-based adaptive rank allocation during training."""
     from peft import AdaLoraConfig, TaskType
 

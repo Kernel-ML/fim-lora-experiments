@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 from pathlib import Path
@@ -142,6 +143,7 @@ def run(args):
         max_seq_length=512,
         fim_n_batches=args.fim_batches,
         seed=args.seed,
+        gradient_accumulation_steps=2,
     )
 
     output_dir = Path(args.output_dir) / args.method / args.task / f"r{args.rank}" / f"seed{args.seed}"
@@ -160,6 +162,16 @@ def run(args):
         use_safetensors=True, torch_dtype=torch.float32,
     )
 
+    # Dataset
+    dataset = load_glue_dataset(args.task, tokenizer, cfg.max_seq_length)
+    train_dataset = dataset["train"]
+    eval_dataset = dataset[task_cfg["split_eval"]]
+    collator = DataCollatorWithPadding(tokenizer)
+
+    # Set dataset size so cfg.total_steps() works (needed by AdaLoRA)
+    cfg.train_dataset_size = len(train_dataset)
+    total_steps = cfg.total_steps()
+
     # PEFT config
     method_map = {
         "lora":        get_lora_config,
@@ -170,12 +182,6 @@ def run(args):
     }
     peft_config = method_map[args.method](cfg)
     model = get_peft_model(base_model, peft_config)
-
-    # Dataset
-    dataset = load_glue_dataset(args.task, tokenizer, cfg.max_seq_length)
-    train_dataset = dataset["train"]
-    eval_dataset = dataset[task_cfg["split_eval"]]
-    collator = DataCollatorWithPadding(tokenizer)
 
     # FIM rank allocation (fim_lora and random_rank only)
     if args.method == "fim_lora":
@@ -221,7 +227,7 @@ def run(args):
         gradient_accumulation_steps=2,                    # effective batch = 16 × 2 = 32
         learning_rate=cfg.learning_rate,
         weight_decay=cfg.weight_decay,
-        warmup_ratio=cfg.warmup_ratio,
+        warmup_steps=math.ceil(total_steps * cfg.warmup_ratio),
         lr_scheduler_type="linear",
         eval_strategy="epoch",
         save_strategy="epoch",
