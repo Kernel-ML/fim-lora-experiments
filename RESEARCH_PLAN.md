@@ -78,9 +78,10 @@ All methods use identical hyperparameters except the rank allocation mechanism. 
 | Weight decay | 0.01 |
 | Warmup ratio | 6% |
 | Epochs | 30 (small tasks: CoLA, MRPC, RTE) · 10 (large: MNLI, QQP) |
-| Batch size | 32 |
+| Batch size | 16 per device + grad_accum=2 → effective 32 (batch=32 OOMs in FP32 on L4 24GB; step count kept identical to AdaLoRA) |
+| Precision | FP32 (deberta-v3-base safetensors stores weights in FP16; forced to FP32 to prevent classifier overflow on first optimizer step) |
 | Target modules | query_proj, value_proj, key_proj |
-| lora_alpha | 2 × r |
+| lora_alpha | 2 × r (validated stable in FP32) |
 | lora_dropout | 0.1 |
 | FIM calibration | 8 batches from train set |
 
@@ -140,6 +141,17 @@ uv run python scripts/sagemaker_train.py --sweep llama --instance ml.g6e.2xlarge
 uv run python scripts/sagemaker_train.py --collect
 uv run python src/collect_results.py --experiment glue
 ```
+
+### Validated Hyperparameter Notes (from empirical testing on L4 24GB)
+
+| Param | Plan | Tested | Verdict |
+|-------|------|--------|---------|
+| lr | 2e-4 | ✅ stable in FP32 at steps 0–1 | Keep 2e-4 |
+| lora_alpha | 2r | ✅ stable in FP32 | Keep 2r |
+| batch_size | 32 | ❌ OOMs in FP32 on L4 | Changed to 16 + grad_accum=2 |
+| precision | unspecified | ❌ fp16 causes classifier overflow | FP32 required for DeBERTa-v3 |
+
+> **Any sweep run with lr=5e-5 or alpha=r must be discarded and rerun** — those are wrong relative to AdaLoRA's setup and would make the paper comparison invalid.
 
 ---
 

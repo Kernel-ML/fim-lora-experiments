@@ -131,12 +131,12 @@ def run(args):
         model_name=MODEL_NAME,
         task=args.task,
         base_r=args.rank,
-        lora_alpha=args.rank * 2,
+        lora_alpha=args.rank * 2,       # 2r — validated stable in FP32
         lora_dropout=0.1,
         target_modules=DEBERTA_TARGET_MODULES,
-        learning_rate=2e-4,
+        learning_rate=2e-4,             # validated stable in FP32
         num_epochs=TASK_EPOCHS.get(args.task, 10),
-        batch_size=32,
+        batch_size=16,                  # L4 24GB OOMs at 32 in FP32; grad_accum=2 restores effective=32
         warmup_ratio=0.06,
         weight_decay=0.01,
         max_seq_length=512,
@@ -209,11 +209,15 @@ def run(args):
     model.print_trainable_parameters()
 
     # Training
+    # Note on batch size: DeBERTa-v3 requires FP32 (bf16/fp16 causes instability).
+    # FP32 + batch=32 OOMs on L4 24GB. We use batch=16 + grad_accum=2 to match
+    # AdaLoRA's effective batch size of 32 with identical total gradient steps.
     training_args = TrainingArguments(
         output_dir=str(output_dir),
         num_train_epochs=cfg.num_epochs,
-        per_device_train_batch_size=cfg.batch_size,
-        per_device_eval_batch_size=cfg.batch_size,
+        per_device_train_batch_size=cfg.batch_size,       # 16
+        per_device_eval_batch_size=cfg.batch_size * 2,    # 32 (eval is inference-only, fits)
+        gradient_accumulation_steps=2,                    # effective batch = 16 × 2 = 32
         learning_rate=cfg.learning_rate,
         weight_decay=cfg.weight_decay,
         warmup_ratio=cfg.warmup_ratio,
@@ -225,7 +229,8 @@ def run(args):
         report_to="wandb" if not args.no_wandb else "none",
         run_name=run_name,
         seed=args.seed,
-        fp16=torch.cuda.is_available(),
+        fp16=False,    # DeBERTa-v3 requires FP32 — fp16 causes loss spikes
+        bf16=False,
         dataloader_num_workers=4,
         logging_steps=50,
     )
