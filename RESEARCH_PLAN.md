@@ -98,6 +98,17 @@ All methods use identical hyperparameters except the rank allocation mechanism. 
 | Target modules | q_proj, v_proj, k_proj, o_proj, gate_proj, up_proj, down_proj |
 | FIM calibration | 8 batches |
 
+### Validated Hyperparameter Notes (from empirical testing on L4 24GB)
+
+| Param | Plan | Tested | Verdict |
+|-------|------|--------|---------|
+| lr | 2e-4 | ✅ stable in FP32 at steps 0–1 | Keep 2e-4 |
+| lora_alpha | 2r | ✅ stable in FP32 | Keep 2r |
+| batch_size | 32 | ❌ OOMs in FP32 on L4 | Changed to 16 + grad_accum=2 |
+| precision | unspecified | ❌ fp16 causes classifier overflow | FP32 required for DeBERTa-v3 |
+
+> **Any sweep run with lr=5e-5 or alpha=r must be discarded and rerun** — those are wrong relative to AdaLoRA's setup and would make the paper comparison invalid.
+
 ---
 
 ## 5. Ablation Studies
@@ -142,17 +153,6 @@ uv run python scripts/sagemaker_train.py --collect
 uv run python src/collect_results.py --experiment glue
 ```
 
-### Validated Hyperparameter Notes (from empirical testing on L4 24GB)
-
-| Param | Plan | Tested | Verdict |
-|-------|------|--------|---------|
-| lr | 2e-4 | ✅ stable in FP32 at steps 0–1 | Keep 2e-4 |
-| lora_alpha | 2r | ✅ stable in FP32 | Keep 2r |
-| batch_size | 32 | ❌ OOMs in FP32 on L4 | Changed to 16 + grad_accum=2 |
-| precision | unspecified | ❌ fp16 causes classifier overflow | FP32 required for DeBERTa-v3 |
-
-> **Any sweep run with lr=5e-5 or alpha=r must be discarded and rerun** — those are wrong relative to AdaLoRA's setup and would make the paper comparison invalid.
-
 ---
 
 ## 7. Paper Structure
@@ -179,48 +179,10 @@ uv run python src/collect_results.py --experiment glue
 - AdaLoRA (Zhang et al., ICLR 2023)
 - EVA (NeurIPS 2025)
 - Optimal Brain Damage (LeCun et al., NeurIPS 1990)
-- Your JISEM 2024 paper (theoretical ancestry)
-- torchao FisherPruner PR #4352 (related FIM application)
 
 ---
 
-## 8. NIW Petition Connection
-
-| NIW Prong | Evidence from this paper |
-|-----------|------------------------|
-| Prong 1 — Substantial merit | Published empirical paper at ICLR/NeurIPS on novel PEFT method |
-| Prong 2 — Well-positioned | FIM-LoRA + FisherPruner (torchao) + PEFT OSS PR — coherent FIM research theme across 3 repos |
-| Prong 3 — National interest | PEFT methods reduce compute for LLM fine-tuning — direct AI efficiency impact |
-
-**Cross-citation chain:**
-```
-JISEM 2024 paper (theoretical basis)
-    ↓ cites
-torchao PR #4352 — FisherPruner (weight pruning)
-    ↓ related
-PEFT PR #3204 — FIM-LoRA (rank allocation)   ← this paper
-    ↓ cites
-FIM-LoRA paper (arXiv + venue)
-```
-
----
-
-## 9. Timeline
-
-| Week | Tasks | Milestone |
-|------|-------|-----------|
-| Week 1 (now) | Fix smoke test, validate pipeline on SageMaker | Pipeline confirmed working |
-| Week 2 | Launch GLUE sweep (Exp 1) | First results: LoRA vs FIM-LoRA on GLUE |
-| Week 3 | Launch LLaMA-3 (Exp 2) + ablations (Exp 3) | Full experimental results |
-| Week 4 | Analyze results, generate all figures | Tables + figures finalized |
-| Week 5–6 | Write paper draft | First draft complete |
-| Week 6 | Update PEFT PR #3204 with results | OSS + paper loop closed |
-| **May 2026** | **NeurIPS 2026 submission** | |
-| **Oct 2026** | **ICLR 2027 submission (primary target)** | |
-
----
-
-## 10. Repository Structure
+## 8. Repository Structure
 
 ```
 fim-lora-experiments/
@@ -245,7 +207,7 @@ fim-lora-experiments/
 
 ---
 
-## 11. Current Status
+## 9. Current Status
 
 | Component | Status |
 |-----------|--------|
