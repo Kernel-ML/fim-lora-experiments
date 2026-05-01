@@ -20,6 +20,7 @@ RANKS="${RANKS:-2 4 8 16}"
 SEEDS="${SEEDS:-42 1337 2024}"
 OUTPUT_DIR="${OUTPUT_DIR:-results}"
 N_GPUS="${N_GPUS:-1}"
+FIM_R_MIN="${FIM_R_MIN:-8}"    # Best from ablations: r_min=8 (p4de sweep result)
 
 # Tee all output to a timestamped log file
 mkdir -p logs
@@ -80,6 +81,7 @@ run_on_gpu() {
       --task "$TASK" \
       --rank "$RANK" \
       --seed "$SEED" \
+      --fim-r-min "$FIM_R_MIN" \
       --output-dir "$OUTPUT_DIR"
     echo ""
   done

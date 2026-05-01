@@ -190,7 +190,7 @@ def run(args):
                                   shuffle=True, collate_fn=collator)
         rank_pattern = apply_fim_ranks(
             model, calib_loader, n_batches=cfg.fim_n_batches,
-            r_min=1, r_max=cfg.base_r * 2, verbose=True,
+            r_min=args.fim_r_min, r_max=cfg.base_r * 2, verbose=True,
         )
         if not args.no_wandb:
             wandb.log({"rank_pattern": {k: v for k, v in rank_pattern.items()}})
@@ -293,6 +293,8 @@ if __name__ == "__main__":
     parser.add_argument("--rank", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--fim-batches", type=int, default=8)
+    parser.add_argument("--fim-r-min", type=int, default=8,
+                        help="Minimum rank for FIM-LoRA allocation (ablation best: r_min=8)")
     parser.add_argument("--num-epochs", type=int, default=None, help="Override epoch count")
     parser.add_argument("--output-dir", default="results")
     parser.add_argument("--no-wandb", action="store_true")
