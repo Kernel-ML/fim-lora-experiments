@@ -36,6 +36,14 @@ class ExperimentConfig:
     seed: int = 42
     output_dir: str = "results"
     wandb_project: str = "fim-lora"
+    train_dataset_size: Optional[int] = None
+    gradient_accumulation_steps: int = 1
+
+    def total_steps(self) -> Optional[int]:
+        if self.train_dataset_size is None:
+            return None
+        steps_per_epoch = self.train_dataset_size // (self.batch_size * self.gradient_accumulation_steps)
+        return steps_per_epoch * self.num_epochs
 
 
 def get_lora_config(cfg: ExperimentConfig):
@@ -56,19 +64,28 @@ def get_adalora_config(cfg: ExperimentConfig):
     """AdaLoRA — SVD-based adaptive rank allocation during training."""
     from peft import AdaLoraConfig, TaskType
 
+    total_step = cfg.total_steps()
+    # AdaLoRA schedule: tinit=warmup steps, tfinal=final freeze steps.
+    # Constraint: tinit < total_step - tfinal  (budgeting phase must exist).
+    # Original 10% tinit caused a loss spike to 12+ at step 50 because SVD
+    # rank scores are noise before the model has warmed up. Using 20% warmup.
+    # tfinal=10% leaves a final freeze phase of 10% of total steps.
+    tinit = int(total_step * 0.20) if total_step else 100
+    tfinal = int(total_step * 0.10) if total_step else 50
+
     return AdaLoraConfig(
-        init_r=cfg.base_r * 2,         # start with 2× budget, prune down
+        init_r=cfg.base_r + max(4, cfg.base_r // 4),  # modest 25% headroom
         target_r=cfg.base_r,            # end at same budget as LoRA
         lora_alpha=cfg.lora_alpha,
         lora_dropout=cfg.lora_dropout,
         target_modules=cfg.target_modules,
         bias="none",
         task_type=_infer_task_type(cfg.task),
-        # AdaLoRA scheduler defaults (from original paper)
+        total_step=total_step,
         beta1=0.85,
         beta2=0.85,
-        tinit=200,
-        tfinal=1000,
+        tinit=tinit,
+        tfinal=tfinal,
         deltaT=10,
     )
 

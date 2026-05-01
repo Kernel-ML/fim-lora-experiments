@@ -125,12 +125,19 @@ def run(args):
     output_dir = Path(args.output_dir) / args.method / "commonsense" / f"r{args.rank}" / f"seed{args.seed}"
     output_dir.mkdir(parents=True, exist_ok=True)
     run_name = f"{args.method}_commonsense_r{args.rank}_seed{args.seed}"
+    if args.method == "fim_lora":
+        n_bat = args.fim_n_batches or cfg.fim_n_batches
+        run_name += f"_rmin{args.fim_r_min}_nb{n_bat}"
 
     if not args.no_wandb:
         wandb.init(project="fim-lora", name=run_name, config=vars(args))
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     tokenizer.pad_token = tokenizer.eos_token
+
+    train_dataset = load_commonsense_train(tokenizer, cfg.max_seq_length)
+    cfg.train_dataset_size = len(train_dataset)
+    cfg.gradient_accumulation_steps = 4
 
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
@@ -147,14 +154,15 @@ def run(args):
     peft_config = method_map[args.method](cfg)
     model = get_peft_model(base_model, peft_config)
 
-    train_dataset = load_commonsense_train(tokenizer, cfg.max_seq_length)
     collator = DataCollatorForSeq2Seq(tokenizer, model=model, padding=True)
 
     if args.method == "fim_lora":
         from torch.utils.data import DataLoader
         calib_loader = DataLoader(train_dataset, batch_size=cfg.batch_size,
                                   shuffle=True, collate_fn=collator)
-        apply_fim_ranks(model, calib_loader, n_batches=cfg.fim_n_batches, verbose=True)
+        n_batches = args.fim_n_batches if args.fim_n_batches is not None else cfg.fim_n_batches
+        apply_fim_ranks(model, calib_loader, n_batches=n_batches,
+                        r_min=args.fim_r_min, verbose=True)
 
     model.print_trainable_parameters()
 
@@ -165,7 +173,7 @@ def run(args):
         gradient_accumulation_steps=4,
         learning_rate=cfg.learning_rate,
         weight_decay=cfg.weight_decay,
-        warmup_ratio=cfg.warmup_ratio,
+        warmup_steps=int(cfg.total_steps() * cfg.warmup_ratio) if cfg.total_steps() else 0,
         lr_scheduler_type="cosine",
         save_strategy="epoch",
         report_to="wandb" if not args.no_wandb else "none",
@@ -181,7 +189,7 @@ def run(args):
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=collator,
     )
 
@@ -202,6 +210,8 @@ if __name__ == "__main__":
     parser.add_argument("--rank", type=int, default=16)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", default="results")
+    parser.add_argument("--fim-r-min", type=int, default=1)
+    parser.add_argument("--fim-n-batches", type=int, default=None)  # None → use cfg.fim_n_batches
     parser.add_argument("--no-wandb", action="store_true")
     args = parser.parse_args()
     run(args)

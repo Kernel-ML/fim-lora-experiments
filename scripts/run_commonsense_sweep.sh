@@ -20,12 +20,7 @@ RANK="${RANK:-16}"
 OUTPUT_DIR="${OUTPUT_DIR:-results}"
 N_GPUS="${N_GPUS:-1}"
 
-# Tee all output to a timestamped log file
 mkdir -p logs
-LOG_FILE="logs/commonsense_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee -a "$LOG_FILE") 2>&1
-echo "Logging to $LOG_FILE"
-echo ""
 
 echo "=== FIM-LoRA Commonsense Sweep ==="
 echo "Methods: $METHODS"

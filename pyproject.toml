@@ -28,6 +28,7 @@ dependencies = [
     "transformers>=5.7.0",
     "wandb>=0.26.1",
     "ipykernel>=6.0.0",
+    "lm-eval>=0.4.11",
 ]
 
 [[tool.uv.index]]
